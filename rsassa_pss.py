@@ -72,12 +72,12 @@ def _mod_inverse(value, modulus):
     return inverse % modulus
 
 
-def generate_keypair(key_size=2048):
+def generate_keypair(key_size=2048, voting_modulus=False, participant_modulus=False):
     prime_bit_length = key_size // 2
 
     prime_p = _generate_prime(prime_bit_length)
     prime_q = _generate_prime(prime_bit_length)
-    while prime_p == prime_q:
+    while prime_p == prime_q or voting_modulus and prime_p * prime_q % 100 < 50 or participant_modulus and prime_p * prime_q % 100 > 50:
         prime_q = _generate_prime(prime_bit_length)
 
     modulus = prime_p * prime_q
