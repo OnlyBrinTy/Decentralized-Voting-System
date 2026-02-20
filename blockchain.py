@@ -1,28 +1,18 @@
 import datetime
 import hashlib
 
-MAX_NONCE = 2**32
-
-
-def sign_block(block, signer):
-    block_hash = block.hash()
-    return signer.sign(block_hash)
-
-
-def verify_block(block, signature, signer):
-    block_hash = block.hash()
-    return signer.verify(block_hash, signature)
-
 
 class Block:
-    def __init__(self, data):
+    def __init__(self, data, public_key):
+        self.public_key = public_key
+        self.signature = None
+
         self.blockNo = 0
         self.data = data
         self.next = None
         self.nonce = 0
         self.timestamp = datetime.datetime.now()
         self.prev_hash = 0x0
-        self.signature = None
 
     def hash(self):
         h = hashlib.sha256()
@@ -34,6 +24,13 @@ class Block:
             + str(self.blockNo).encode("utf-8")
         )
         return h.hexdigest()
+
+    def mine(self, target):
+        while int(self.hash(), 16) > target:
+            self.nonce += 1
+            
+        print(self)
+
 
     def __str__(self):
         sig_hex = self.signature.hex()[:32] + "..." if self.signature else "None"
@@ -48,29 +45,13 @@ class Block:
 
 
 class Blockchain:
-    target = 2 ** (256 - diff)
-
     head = curr_block = Block("Genesis")
-
-    def __init__(self, signer):
-        self.signer = signer
-        self.curr_block.signature = sign_block(self.curr_block, self.signer)
 
     def add(self, block):
         block.prev_hash = self.curr_block.hash()
         block.blockNo = self.curr_block.blockNo + 1
+
         self.curr_block.next = self.curr_block = block
-
-    def mine(self, block):
-        for _ in range(MAX_NONCE):
-            if int(block.hash(), 16) <= self.target:
-                self.add(block)
-                block.signature = sign_block(block, self.signer)
-                print(block)
-                break
-            else:
-                block.nonce += 1
-
 
 def verify_chain(blockchain: Blockchain):
     current = blockchain.head
