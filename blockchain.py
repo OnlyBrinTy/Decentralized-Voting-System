@@ -31,6 +31,7 @@ class Block:
     def __str__(self):
         sig_hex = self.signature.hex() if self.signature else "None"
         return (
+            f"\Prev hash: {self.prev_hash()}\n"
             f"\nHash: {self.hash()}\n"
             f"Index: {self.blockNo}\n"
             f"Data: {self.data}\n"
@@ -45,13 +46,21 @@ class Blockchain:
         self.target = target
         self.head = self.curr_block = Block("Genesis", None)
 
-    def add(self, block):
-        block.prev_hash = self.curr_block.hash()
-        block.blockNo = self.curr_block.blockNo + 1
+    def add(self, block, signer, authority_modulus):
+        prev = self.curr_block
+        block.prev_hash = prev.hash()
+        block.blockNo = prev.blockNo + 1
 
         self.curr_block.next = self.curr_block = block
-
         self.mine()
+        block.signature = signer.sign(block.hash())
+
+        try:
+            self.verify_chain(authority_modulus)
+        except ValueError:
+            prev.next = None
+            self.curr_block = prev
+            raise
 
     def mine(self):
         while int(self.curr_block.hash(), 16) > self.target:
@@ -124,6 +133,11 @@ class Blockchain:
                 if nickname in seen_nicknames:
                     raise ValueError(f"Block {current.blockNo}: duplicate nickname '{nickname}'")
                 seen_nicknames.add(nickname)
+
+            if is_vote:
+                candidate = current.data["voted_for"]
+                if candidate not in seen_nicknames:
+                    raise ValueError(f"Block {current.blockNo}: candidate '{candidate}' does not exist")
 
             prev = current
             current = current.next
