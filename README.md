@@ -5,6 +5,7 @@ This is a small, educational voting system implemented as an **append-only, in-m
 ## How does it work?
 
 1. The **Authority** creates a master RSA keypair.
+   - RSA keygen computes the private exponent modulo **Carmichael’s totient** \( \lambda(n)=\mathrm{lcm}(p-1,q-1) \) (not Euler’s \( \varphi(n) \)).
 2. A user runs `/issue_keys`. The Authority returns **two certified public keys** (and their private exponents):
    - a **voter** key where \(n \bmod 100 > 50\)
    - a **participant-registration** key where \(n \bmod 100 < 50\)

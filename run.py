@@ -7,7 +7,9 @@ Core flow:
   validates the full chain; invalid blocks are rolled back automatically.
 """
 
-from rsassa_pss import RSASSA_PSS
+import hashlib
+
+from rsassa_pss import RSASSA_PSS, verify_signature
 from blockchain import Block, Blockchain
 from authority import Authority
 from time import sleep
@@ -18,7 +20,7 @@ Commands:
 /add_participant <nickname> <name> <participant_private_key> <participant_public_key> <participant_signature>
 /vote <participant_nickname> <voter_private_key> <voter_public_key> <voter_signature>
 /view_blockchain
-/check_signature <public_key> <signature>
+/check_signature <public_key> <message_hash_hex> <signature_hex>
 /list_all_participants
 /exit
 """
@@ -36,7 +38,8 @@ class VotingCLI:
         parsed_private_key = int(private_key)
         parsed_public_key = int(public_key)
         parsed_signature = bytes.fromhex(signature)
-        if not self.authority.rsa_pss.verify(str(parsed_public_key), parsed_signature):
+        cert_hash = hashlib.sha256(str(parsed_public_key).encode("utf-8")).digest()
+        if not verify_signature(self.authority.modulus, cert_hash, parsed_signature):
             raise ValueError("Unauthorized public key")
 
         return parsed_private_key, parsed_public_key, parsed_signature
@@ -47,18 +50,22 @@ class VotingCLI:
         print(
             "An authority has issued keys for you. Keep them secret. 'Public' and 'Private' keys are represented as public and private exponents respectively.\n\n"
         )
-        print(f"Voter private_key: {voter_key[0]}")
+        print(f"Voter private key: {voter_key[0]}")
         print(f"Voter public key: {voter_key[1]}")
         print(f"Voter  signature: {voting_signature.hex()}")
-        print(f"Participant private_key: {participant_key[0]}")
+        print(f"Participant private key: {participant_key[0]}")
         print(f"Participant public key: {participant_key[1]}")
         print(f"Participant signature: {participant_signature.hex()}")
 
-    def add_participant(self, nickname, name, private_key, public_key, participant_signature):
-        private_key, public_key, signature = self._validate_key_and_signature(private_key, public_key, participant_signature)
+    def add_participant(
+        self, nickname, name, private_key, public_key, participant_signature
+    ):
+        private_key, public_key, signature = self._validate_key_and_signature(
+            private_key, public_key, participant_signature
+        )
         signer = RSASSA_PSS((private_key, public_key))
 
-        block = Block({'nickname': nickname, 'name': name}, public_key)
+        block = Block({"nickname": nickname, "name": name}, public_key)
         block.signature_of_public_key = signature
 
         self.blockchain.add(block, signer, self.authority.modulus)
@@ -66,16 +73,17 @@ class VotingCLI:
         print(f"Participant added: {nickname} ({name})")
 
     def vote(self, participant_nickname, private_key, public_key, voter_signature):
-        private_key, public_key, signature = self._validate_key_and_signature(private_key, public_key, voter_signature)
+        private_key, public_key, signature = self._validate_key_and_signature(
+            private_key, public_key, voter_signature
+        )
         signer = RSASSA_PSS((private_key, public_key))
 
-        block = Block({'voted_for': participant_nickname}, public_key)
+        block = Block({"voted_for": participant_nickname}, public_key)
         block.signature_of_public_key = signature
 
         self.blockchain.add(block, signer, self.authority.modulus)
 
         print(f"Vote recorded: {participant_nickname}")
-
 
     def view_blockchain(self):
         print("Viewing blockchain...")
@@ -84,10 +92,11 @@ class VotingCLI:
             print(current, end="\n\n")
             current = current.next
 
-    def check_signature(self, public_key, signature):
-        is_valid = self.authority.rsa_pss.verify(
-            str(int(public_key)), bytes.fromhex(signature)
-        )
+    def check_signature(self, signer_modulus, message_hash_hex, signature_hex):
+        modulus = int(signer_modulus)
+        message_hash = bytes.fromhex(message_hash_hex)
+        signature = bytes.fromhex(signature_hex)
+        is_valid = verify_signature(modulus, message_hash, signature)
         print(f"Signature valid: {is_valid}")
 
     def list_all_participants(self):
@@ -97,19 +106,18 @@ class VotingCLI:
 
         current = self.blockchain.head.next
         while current is not None:
-            if current.data.get('nickname'):
-                participants[current.data['nickname']] = 0
-            elif current.data.get('voted_for'):
-                participants[current.data['voted_for']] += 1
+            if current.data.get("nickname"):
+                participants[current.data["nickname"]] = 0
+            elif current.data.get("voted_for"):
+                participants[current.data["voted_for"]] += 1
 
             current = current.next
-        
+
         participants = sorted(participants.items(), key=lambda x: x[1], reverse=True)
 
         print("\n\nParticipants:")
         for participant, votes in participants:
             print(f"{participant}: {votes} votes")
-
 
     def run(self):
         print(
@@ -127,11 +135,13 @@ class VotingCLI:
                     case "/issue_keys":
                         self.issue_keys()
                     case "/add_participant":
-                        self.add_participant(args[1], args[2], args[3], args[4], args[5])
+                        self.add_participant(
+                            args[1], args[2], args[3], args[4], args[5]
+                        )
                     case "/vote":
                         self.vote(args[1], args[2], args[3], args[4])
                     case "/check_signature":
-                        self.check_signature(args[1], args[2])
+                        self.check_signature(args[1], args[2], args[3])
                     case "/view_blockchain":
                         self.view_blockchain()
                     case "/view_participant":

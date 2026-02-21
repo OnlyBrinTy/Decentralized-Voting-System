@@ -77,12 +77,19 @@ def generate_keypair(key_size=2048, voting_modulus=False, participant_modulus=Fa
 
     prime_p = _generate_prime(prime_bit_length)
     prime_q = _generate_prime(prime_bit_length)
-    while prime_p == prime_q or voting_modulus and prime_p * prime_q % 100 < 50 or participant_modulus and prime_p * prime_q % 100 > 50:
+    while (
+        prime_p == prime_q
+        or voting_modulus
+        and prime_p * prime_q % 100 < 50
+        or participant_modulus
+        and prime_p * prime_q % 100 > 50
+    ):
         prime_q = _generate_prime(prime_bit_length)
 
     modulus = prime_p * prime_q
-    euler_totient = (prime_p - 1) * (prime_q - 1)
-    private_exponent = _mod_inverse(PUBLIC_EXPONENT, euler_totient)
+
+    carmichael_totient = math.lcm(prime_p - 1, prime_q - 1)
+    private_exponent = _mod_inverse(PUBLIC_EXPONENT, carmichael_totient)
 
     return private_exponent, modulus
 
@@ -93,6 +100,112 @@ def rsa_encrypt(plaintext_int, public_exponent, modulus):
 
 def rsa_decrypt(ciphertext_int, private_exponent, modulus):
     return pow(ciphertext_int, private_exponent, modulus)
+
+
+def _mgf1(hash_function, seed, output_length):
+    mask = b""
+    counter = 0
+    while len(mask) < output_length:
+        counter_bytes = counter.to_bytes(4, "big")
+        mask += hash_function(seed + counter_bytes).digest()
+        counter += 1
+    return mask[:output_length]
+
+
+def _i2osp(integer_value, byte_length):
+    return integer_value.to_bytes(byte_length, "big")
+
+
+def _os2ip(byte_string):
+    return int.from_bytes(byte_string, "big")
+
+
+def _pss_verify_from_hash(
+    hash_function, hash_length, salt_length, message_hash, encoded_message, encoded_bits
+):
+    encoded_length = math.ceil(encoded_bits / 8)
+
+    min_length = hash_length + salt_length + 2
+    if encoded_length < min_length:
+        return False
+
+    if len(encoded_message) != encoded_length:
+        return False
+
+    if encoded_message[-1] != 0xBC:
+        return False
+
+    masked_data_block = encoded_message[: encoded_length - hash_length - 1]
+    extracted_hash = encoded_message[
+        encoded_length - hash_length - 1 : encoded_length - 1
+    ]
+
+    leftmost_zero_bits = 8 * encoded_length - encoded_bits
+    if leftmost_zero_bits > 0:
+        top_bits_mask = 0xFF >> leftmost_zero_bits
+        if masked_data_block[0] & ~top_bits_mask:
+            return False
+
+    data_block_mask = _mgf1(
+        hash_function, extracted_hash, encoded_length - hash_length - 1
+    )
+    data_block = bytes(
+        masked_byte ^ mask_byte
+        for masked_byte, mask_byte in zip(masked_data_block, data_block_mask)
+    )
+
+    if leftmost_zero_bits > 0:
+        data_block = bytes([data_block[0] & top_bits_mask]) + data_block[1:]
+
+    padding_zeros_length = encoded_length - hash_length - salt_length - 2
+    for i in range(padding_zeros_length):
+        if data_block[i] != 0:
+            return False
+
+    if data_block[padding_zeros_length] != 0x01:
+        return False
+
+    recovered_salt = data_block[padding_zeros_length + 1 :]
+    reconstructed_padded_message = b"\x00" * 8 + message_hash + recovered_salt
+    recomputed_hash = hash_function(reconstructed_padded_message).digest()
+
+    return extracted_hash == recomputed_hash
+
+
+def verify_signature(
+    modulus, message_hash, signature, hash_function=hashlib.sha256, salt_length=32
+):
+    hash_length = hash_function().digest_size
+    key_size = modulus.bit_length()
+    encoded_message_bits = key_size - 1
+    encoded_message_length = math.ceil(encoded_message_bits / 8)
+
+    expected_signature_length = (key_size + 7) // 8
+    if len(signature) != expected_signature_length:
+        return False
+
+    signature_representative = _os2ip(signature)
+
+    if signature_representative >= modulus:
+        return False
+
+    message_representative = rsa_encrypt(
+        signature_representative, PUBLIC_EXPONENT, modulus
+    )
+
+    try:
+        encoded_message = _i2osp(message_representative, encoded_message_length)
+    except OverflowError:
+        return False
+
+    return _pss_verify_from_hash(
+        hash_function,
+        hash_length,
+        salt_length,
+        message_hash,
+        encoded_message,
+        encoded_message_bits,
+    )
 
 
 class RSASSA_PSS:
@@ -248,82 +361,6 @@ class RSASSA_PSS:
 
         return encoded_message
 
-    def _pss_verify(self, message, encoded_message, encoded_bits):
-        """
-        EMSA-PSS-VERIFY - PSS Verification Operation (RFC 8017 Section 9.1.2).
-
-        Verifies that an encoded message is a valid PSS encoding of a message.
-
-        Args:
-            message: Original message bytes.
-            encoded_message: Encoded message bytes to verify.
-            encoded_bits: Bit length of encoded message.
-
-        Returns:
-            True if valid encoding, False otherwise.
-        """
-        message_hash = self.hash_function(message).digest()
-        encoded_length = math.ceil(encoded_bits / 8)
-
-        # Step 1: Check minimum length
-        min_length = self.hash_length + self.salt_length + 2
-        if encoded_length < min_length:
-            return False
-
-        # Step 2: Check encoded message length
-        if len(encoded_message) != encoded_length:
-            return False
-
-        # Step 3: Check trailer byte is 0xBC
-        trailer_byte = encoded_message[-1]
-        if trailer_byte != 0xBC:
-            return False
-
-        # Step 4: Extract masked data block and hash
-        masked_data_block = encoded_message[: encoded_length - self.hash_length - 1]
-        extracted_hash = encoded_message[
-            encoded_length - self.hash_length - 1 : encoded_length - 1
-        ]
-
-        # Step 5: Check that leftmost bits are zero
-        leftmost_zero_bits = 8 * encoded_length - encoded_bits
-        if leftmost_zero_bits > 0:
-            top_bits_mask = 0xFF >> leftmost_zero_bits
-            if masked_data_block[0] & ~top_bits_mask:
-                return False
-
-        # Step 6: Unmask the data block
-        data_block_mask = self._mask_generation_function_1(
-            extracted_hash, encoded_length - self.hash_length - 1
-        )
-        data_block = bytes(
-            masked_byte ^ mask_byte
-            for masked_byte, mask_byte in zip(masked_data_block, data_block_mask)
-        )
-
-        # Clear the leftmost bits that were zeroed during encoding
-        if leftmost_zero_bits > 0:
-            data_block = bytes([data_block[0] & top_bits_mask]) + data_block[1:]
-
-        # Step 7: Check padding structure: should be zeros followed by 0x01
-        padding_zeros_length = encoded_length - self.hash_length - self.salt_length - 2
-        for i in range(padding_zeros_length):
-            if data_block[i] != 0:
-                return False
-
-        separator_byte = data_block[padding_zeros_length]
-        if separator_byte != 0x01:
-            return False
-
-        # Step 8: Extract salt and reconstruct M'
-        recovered_salt = data_block[padding_zeros_length + 1 :]
-        reconstructed_padded_message = b"\x00" * 8 + message_hash + recovered_salt
-
-        # Step 9: Verify hash matches
-        recomputed_hash = self.hash_function(reconstructed_padded_message).digest()
-
-        return extracted_hash == recomputed_hash
-
     def sign(self, message):
         """
         Create RSASSA-PSS signature for a message.
@@ -354,40 +391,9 @@ class RSASSA_PSS:
         return signature
 
     def verify(self, message, signature):
-        """
-        Verify RSASSA-PSS signature for a message.
-
-        Args:
-            message: Original message (string or bytes).
-            signature: Signature bytes to verify.
-
-        Returns:
-            True if signature is valid, False otherwise.
-        """
         if isinstance(message, str):
             message = message.encode("utf-8")
-
-        expected_signature_length = (self.key_size + 7) // 8
-        if len(signature) != expected_signature_length:
-            return False
-
-        # Step 2: Convert signature to integer
-        signature_representative = self._bytes_to_integer(signature)
-
-        if signature_representative >= self.modulus:
-            return False
-
-        message_representative = rsa_encrypt(
-            signature_representative, PUBLIC_EXPONENT, self.modulus
+        message_hash = self.hash_function(message).digest()
+        return verify_signature(
+            self.modulus, message_hash, signature, self.hash_function, self.salt_length
         )
-
-        # Step 5: Convert to encoded message bytes
-        try:
-            encoded_message = self._integer_to_bytes(
-                message_representative, self.encoded_message_length
-            )
-        except OverflowError:
-            return False
-
-        # Step 6: Verify PSS encoding
-        return self._pss_verify(message, encoded_message, self.encoded_message_bits)

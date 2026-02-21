@@ -19,7 +19,7 @@ Design choices (and why):
 import datetime
 import hashlib
 
-from rsassa_pss import RSASSA_PSS
+from rsassa_pss import verify_signature
 
 
 class Block:
@@ -130,7 +130,6 @@ class Blockchain:
         """
         seen_keys = set()
         seen_nicknames = set()
-        authority_verifier = RSASSA_PSS((0, authority_modulus))
 
         prev = self.head
         current = prev.next
@@ -170,13 +169,14 @@ class Blockchain:
 
             if current.signature is None:
                 raise ValueError(f"Block {current.blockNo}: missing block signature")
-            verifier = RSASSA_PSS((0, current.public_key))
-            if not verifier.verify(current.hash(), current.signature):
+            block_hash = hashlib.sha256(current.hash().encode("utf-8")).digest()
+            if not verify_signature(current.public_key, block_hash, current.signature):
                 raise ValueError(f"Block {current.blockNo}: invalid block signature")
 
             if current.signature_of_public_key is None:
                 raise ValueError(f"Block {current.blockNo}: missing certificate")
-            if not authority_verifier.verify(str(current.public_key), current.signature_of_public_key):
+            cert_hash = hashlib.sha256(str(current.public_key).encode("utf-8")).digest()
+            if not verify_signature(authority_modulus, cert_hash, current.signature_of_public_key):
                 raise ValueError(f"Block {current.blockNo}: invalid certificate for public key")
 
             if current.public_key in seen_keys:
