@@ -1,3 +1,12 @@
+"""Interactive CLI for the blockchain-based voting demo.
+
+Core flow:
+- The Authority issues keys and signs (certifies) their public moduli.
+- Users submit a certified key + private exponent to create blocks.
+- The blockchain appends blocks via `Blockchain.add()`, which mines, signs, and
+  validates the full chain; invalid blocks are rolled back automatically.
+"""
+
 from rsassa_pss import RSASSA_PSS
 from blockchain import Block, Blockchain
 from authority import Authority
@@ -16,6 +25,8 @@ Commands:
 
 
 class VotingCLI:
+    """Command-line interface for issuing keys, registering candidates, and voting."""
+
     def __init__(self):
         difficulty = int(input("Set blockchain compute complexity from 0 to 30:"))
         self.authority = Authority()

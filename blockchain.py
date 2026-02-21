@@ -1,3 +1,21 @@
+"""
+Minimal blockchain used by the voting CLI.
+
+Design choices (and why):
+- The chain is stored as a singly-linked list (`Block.next`) because the CLI appends
+  blocks sequentially and only ever traverses from the head; this keeps the model
+  simple and makes rollback (unlinking the last block) trivial.
+- Each block commits to its predecessor via `prev_hash`, and we recompute hashes
+  from the in-memory fields to detect any tampering.
+- Proof-of-Work is implemented as a hash target (`self.target`) to make blocks
+  expensive to create. This is not meant to be production-grade consensus; it is a
+  teaching/demo mechanism to make blocks non-trivial to forge.
+- Blocks are signed (RSASSA-PSS) with the block creator’s key, and public keys are
+  “certified” by an Authority signature to prevent arbitrary keys from being used.
+- Validation is run after every attempted append; if validation fails, the append
+  is rolled back so invalid blocks never persist in the chain.
+"""
+
 import datetime
 import hashlib
 
@@ -5,6 +23,14 @@ from rsassa_pss import RSASSA_PSS
 
 
 class Block:
+    """A single block in the chain.
+
+    Fields are intentionally simple and fully included in the block hash.
+    The `data` payload is restricted by validation to one of two schemas:
+    - participant registration: {"nickname": str, "name": str}
+    - vote: {"voted_for": str}
+    """
+
     def __init__(self, data, public_key):
         self.public_key = public_key
         self.signature = None
@@ -18,6 +44,7 @@ class Block:
         self.prev_hash = 0x0
 
     def hash(self):
+        """Compute the block hash over the current in-memory fields."""
         h = hashlib.sha256()
         h.update(
             str(self.nonce).encode("utf-8")
@@ -31,7 +58,7 @@ class Block:
     def __str__(self):
         sig_hex = self.signature.hex() if self.signature else "None"
         return (
-            f"\Prev hash: {self.prev_hash()}\n"
+            f"\nPrev hash: {self.prev_hash}\n"
             f"\nHash: {self.hash()}\n"
             f"Index: {self.blockNo}\n"
             f"Data: {self.data}\n"
@@ -42,11 +69,26 @@ class Block:
 
 
 class Blockchain:
+    """Append-only chain with validation and rollback-on-failure.
+
+    The CLI uses `add()` to attempt to append a new block. `add()` performs:
+    link -> mine -> sign -> validate (entire chain). If validation fails, the new
+    block is unlinked so the chain remains valid.
+    """
+
     def __init__(self, target):
+        """Create a new chain with the given Proof-of-Work target."""
         self.target = target
         self.head = self.curr_block = Block("Genesis", None)
 
     def add(self, block, signer, authority_modulus):
+        """Attempt to append `block` to the chain.
+
+        - Sets `prev_hash` and `blockNo`
+        - Mines the block under `self.target`
+        - Signs the mined block hash using `signer`
+        - Validates the full chain; rolls back if validation fails
+        """
         prev = self.curr_block
         block.prev_hash = prev.hash()
         block.blockNo = prev.blockNo + 1
@@ -63,11 +105,29 @@ class Blockchain:
             raise
 
     def mine(self):
+        """Mine the current tip (`self.curr_block`) to satisfy the PoW target."""
         while int(self.curr_block.hash(), 16) > self.target:
             self.curr_block.nonce += 1
         print(self.curr_block)
 
     def verify_chain(self, authority_modulus):
+        """Validate the full chain.
+
+        Raises:
+            ValueError: with a human-readable explanation of the first failure.
+
+        What is validated (non-genesis blocks):
+        - Indexes are sequential
+        - Hash links are correct
+        - Hash meets the PoW target
+        - Timestamps are non-decreasing
+        - Block signature is valid for the block hash
+        - Public key certificate is valid under the Authority key
+        - A public key is used at most once (prevents double-voting / duplicate registration)
+        - Participant nicknames are unique
+        - Vote targets must refer to an existing participant registered earlier in the chain
+        - Key “type” matches block type via the modulus % 100 convention
+        """
         seen_keys = set()
         seen_nicknames = set()
         authority_verifier = RSASSA_PSS((0, authority_modulus))

@@ -3,16 +3,19 @@ from rsassa_pss import generate_keypair, RSASSA_PSS
 
 class Authority:
     """
-    Authority is the only entity that can issue keys to people;
-    it binds one identity to a set of keys. Only the keys signed by
-    the authorities' public keyare ligitimate for consensus
+    Issues and certifies public keys used on the blockchain.
 
-    In order to ensure anonymity, the authority issues two different
-    keys: one is for voting, the other is for registring a candidate.
-    Keys cannot be used to vote twice or register two candidates,
-    as the voting key's last two digits are less than 50, and the participant
-    key's last two digits are always greater than 50. Anyone can verify
-    if a key is for voting or registering.
+    Only public keys signed by the Authority are accepted by the chain validator.
+    This prevents arbitrary users from introducing untrusted keys.
+
+    This demo encodes key “type” in the modulus:
+    - voter keys have modulus % 100 > 50
+    - participant-registration keys have modulus % 100 < 50
+
+    The blockchain validator enforces that voting blocks use voter keys and
+    participant blocks use participant-registration keys. Combined with the
+    “one key can appear only once in the chain” rule, this makes it impossible
+    to vote twice or register twice with the same key.
     """
     KEY_SIZE = 1024
 
