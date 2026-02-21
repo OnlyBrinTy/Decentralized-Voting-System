@@ -348,7 +348,7 @@ class RSASSA_PSS:
             message_representative, self.private_exponent, self.modulus
         )
 
-        signature_length = self.key_size // 8
+        signature_length = (self.key_size + 7) // 8
         signature = self._integer_to_bytes(signature_representative, signature_length)
 
         return signature
@@ -367,7 +367,7 @@ class RSASSA_PSS:
         if isinstance(message, str):
             message = message.encode("utf-8")
 
-        expected_signature_length = self.key_size // 8
+        expected_signature_length = (self.key_size + 7) // 8
         if len(signature) != expected_signature_length:
             return False
 
