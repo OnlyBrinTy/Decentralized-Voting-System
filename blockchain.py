@@ -59,7 +59,7 @@ class Block:
         sig_hex = self.signature.hex() if self.signature else "None"
         return (
             f"\nPrev hash: {self.prev_hash}\n"
-            f"\nHash: {self.hash()}\n"
+            f"Hash: {self.hash()}\n"
             f"Index: {self.blockNo}\n"
             f"Data: {self.data}\n"
             f"Signature: {sig_hex}\n"
@@ -96,6 +96,7 @@ class Blockchain:
         self.curr_block.next = self.curr_block = block
         self.mine()
         block.signature = signer.sign(block.hash())
+        print(block)
 
         try:
             self.verify_chain(authority_modulus)
@@ -108,7 +109,6 @@ class Blockchain:
         """Mine the current tip (`self.curr_block`) to satisfy the PoW target."""
         while int(self.curr_block.hash(), 16) > self.target:
             self.curr_block.nonce += 1
-        print(self.curr_block)
 
     def verify_chain(self, authority_modulus):
         """Validate the full chain.
